@@ -14,7 +14,7 @@ SUBSCRIBE={
 
 async def stream():
     while True:
-        async with websockets.connect(URI) as ws:
+        async with websockets.connect(URI,ping_interval=20,ping_timeout=30) as ws:
             await ws.send(json.dumps(SUBSCRIBE))
             print("connected... \n")
             async for message in ws:
