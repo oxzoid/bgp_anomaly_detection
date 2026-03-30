@@ -30,6 +30,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://oxzoid.github.io"],
+    # allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,14 +40,16 @@ con = sqlite3.connect("bgp.db", check_same_thread=False)
 cur = con.cursor()
 
 cur.execute("CREATE TABLE IF NOT EXISTS bgp_prefix_asn(created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ,prefix VARCHAR PRIMARY KEY,authorized_asn INTEGER,hijacking_asn INTEGER)")
+cur.execute("CREATE TABLE IF NOT EXISTS roas(prefix VARCHAR,asn INTEGER)")
 ANOMALY=set()
 RPKI={}
 
 async def clear():
+    c_cur = con.cursor()
     while True:
         try:
             delete_query = "DELETE FROM bgp_prefix_asn WHERE created_at <= datetime('now', '-1 minutes')"
-            await asyncio.to_thread(cur.execute,delete_query)
+            await asyncio.to_thread(c_cur.execute,delete_query)
             await asyncio.sleep(60)
         except Exception as e:
             print(e)
@@ -63,6 +66,7 @@ async def send(request: Request):
     return dict_data
     
 async def store():
+    s_cur = con.cursor()
     while True:
         try:       
             async for event in stream():
@@ -73,15 +77,16 @@ async def store():
                         origin_asn=path[-1] if path else None
                         if isinstance(origin_asn, list):
                                 continue
-                        authorized_asn = RPKI.get(prefix)
+                        await asyncio.to_thread(s_cur.execute,"Select asn from roas where prefix=?",(prefix,))
+                        authorized_asn = await asyncio.to_thread(s_cur.fetchone)
                         if authorized_asn is None:
                             continue
-                        elif origin_asn == authorized_asn:
+                        elif origin_asn == authorized_asn[0]:
                             continue
                         else:
                             if (prefix,origin_asn) not in ANOMALY:
                                 ANOMALY.add((prefix,origin_asn))
-                                await asyncio.to_thread(cur.execute,"INSERT INTO bgp_prefix_asn VALUES(datetime('now'),?,?,?)",(prefix,authorized_asn,origin_asn))
+                                await asyncio.to_thread(s_cur.execute,"INSERT INTO bgp_prefix_asn VALUES(datetime('now'),?,?,?)",(prefix,authorized_asn[0],origin_asn))
                                 await asyncio.to_thread(con.commit)
                                 # print(f"anomaly detected,prefix {prefix} announced by ASN {authorized_asn} now being announced by {origin_asn}")
                             else:
@@ -91,8 +96,14 @@ async def store():
 async def download_rpki():
     global RPKI
     while True:
+        await asyncio.to_thread(cur.execute,"DELETE FROM roas")
+        await asyncio.to_thread(con.commit)
         async with aiohttp.ClientSession() as session:
             async with session.get('https://rpki.cloudflare.com/rpki.json') as resp:    
                 temp1=json.loads(await resp.text())
-                RPKI={roa['prefix']: roa['asn'] for roa in temp1['roas'] if ':' not in roa['prefix']}
+                # RPKI={roa['prefix']: roa['asn'] for roa in temp1['roas'] if ':' not in roa['prefix']}
+                await asyncio.to_thread(cur.executemany, "INSERT OR REPLACE INTO roas VALUES(?,?)", 
+                    [(roa['prefix'], roa['asn']) for roa in temp1['roas'] if ':' not in roa['prefix']])
+                await asyncio.to_thread(con.commit)
         await asyncio.sleep(1200)
+        
