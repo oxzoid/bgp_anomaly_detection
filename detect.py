@@ -51,14 +51,14 @@ async def clear():
         try:
             delete_query = "DELETE FROM bgp_prefix_asn WHERE created_at <= datetime('now', '-1 minutes')"
             await asyncio.to_thread(c_cur.execute,delete_query)
-            await asyncio.sleep(60)
+            await asyncio.sleep(120)
         except Exception as e:
             print(e)
             continue
 
 
 @app.get("/data")
-@limiter.limit("5/minute")
+@limiter.limit("30/minute")
 async def send(request: Request):
     ws_cur = con.cursor()
     await asyncio.to_thread(ws_cur.execute,"Select * from bgp_prefix_asn ORDER BY created_at DESC LIMIT 50")
