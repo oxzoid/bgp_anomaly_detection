@@ -8,6 +8,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from contextlib import asynccontextmanager
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -47,7 +50,8 @@ async def clear():
 
 
 @app.get("/data")
-async def send():
+@limiter.limit("5/minute")
+async def send(request: Request):
     ws_cur = con.cursor()
     await asyncio.to_thread(ws_cur.execute,"Select * from bgp_prefix_asn ORDER BY created_at DESC LIMIT 50")
     rows=await asyncio.to_thread(ws_cur.fetchall)
