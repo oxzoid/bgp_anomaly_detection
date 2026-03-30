@@ -4,7 +4,7 @@ import asyncio
 import json
 from ingest import stream
 import aiohttp
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect,Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from contextlib import asynccontextmanager
@@ -22,7 +22,11 @@ async def lifespan(app: FastAPI):
     task2.cancel()
     task3.cancel()
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://oxzoid.github.io"],
@@ -90,5 +94,5 @@ async def download_rpki():
         async with aiohttp.ClientSession() as session:
             async with session.get('https://rpki.cloudflare.com/rpki.json') as resp:    
                 temp1=json.loads(await resp.text())
-                RPKI={roa['prefix']: roa['asn'] for roa in temp1['roas']}
+                RPKI={roa['prefix']: roa['asn'] for roa in temp1['roas'] if ':' not in roa['prefix']}
         await asyncio.sleep(1200)
