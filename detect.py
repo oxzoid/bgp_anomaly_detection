@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+import ijson
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -94,16 +95,16 @@ async def store():
         except Exception as e:
             continue
 async def download_rpki():
+    r_cur = con.cursor()
     global RPKI
     while True:
-        await asyncio.to_thread(cur.execute,"DELETE FROM roas")
+        await asyncio.to_thread(r_cur.execute,"DELETE FROM roas")
         await asyncio.to_thread(con.commit)
         async with aiohttp.ClientSession() as session:
-            async with session.get('https://rpki.cloudflare.com/rpki.json') as resp:    
-                temp1=json.loads(await resp.text())
-                # RPKI={roa['prefix']: roa['asn'] for roa in temp1['roas'] if ':' not in roa['prefix']}
-                await asyncio.to_thread(cur.executemany, "INSERT OR REPLACE INTO roas VALUES(?,?)", 
-                    [(roa['prefix'], roa['asn']) for roa in temp1['roas'] if ':' not in roa['prefix']])
-                await asyncio.to_thread(con.commit)
+            async with session.get('https://rpki.cloudflare.com/rpki.json') as resp:
+                async for roa in ijson.items_async(resp.content, 'roas.item'):
+                    if ':' not in roa['prefix']:
+                        await asyncio.to_thread(r_cur.execute, "INSERT OR REPLACE INTO roas VALUES(?,?)", (roa['prefix'], roa['asn']))
+            await asyncio.to_thread(con.commit)
         await asyncio.sleep(1200)
         
