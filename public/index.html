@@ -170,7 +170,7 @@
             return Object.assign(svg.node(), { scales: { color } });
         }
         async function loadData() {
-            const res = await fetch("https://bgp-anomaly-detection.onrender.com");
+            const res = await fetch("https://bgp-anomaly-detection.onrender.com/data");
             const data = await res.json();
             try {
                 const links = data.map(row => ({ source: String(row.hijacking_asn), target: row.prefix, nodeStrength: 30 }));
