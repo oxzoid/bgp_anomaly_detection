@@ -4,13 +4,56 @@ import asyncio
 import json
 from ingest import stream
 import aiohttp
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task1 = asyncio.create_task(store())
+    task2 = asyncio.create_task(download_rpki())
+    task3 = asyncio.create_task(clear())
+    yield
+    task1.cancel()
+    task2.cancel()
+    task3.cancel()
+
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 con = sqlite3.connect("bgp.db", check_same_thread=False)
 cur = con.cursor()
 
-cur.execute("CREATE TABLE IF NOT EXISTS bgp_prefix_asn(prefix VARCHAR PRIMARY KEY,asn INTEGER)")
+cur.execute("CREATE TABLE IF NOT EXISTS bgp_prefix_asn(created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ,prefix VARCHAR PRIMARY KEY,authorized_asn INTEGER,hijacking_asn INTEGER)")
 ANOMALY=set()
 RPKI={}
+
+async def clear():
+    while True:
+        try:
+            delete_query = "DELETE FROM bgp_prefix_asn WHERE created_at <= datetime('now', '-1 minutes')"
+            await asyncio.to_thread(cur.execute,delete_query)
+            await asyncio.sleep(60)
+        except Exception as e:
+            print(e)
+            continue
+
+
+@app.get("/data")
+async def send():
+    ws_cur = con.cursor()
+    await asyncio.to_thread(ws_cur.execute,"Select * from bgp_prefix_asn ORDER BY created_at DESC LIMIT 50")
+    rows=await asyncio.to_thread(ws_cur.fetchall)
+    dict_data = [{"created_at": row[0], "prefix": row[1], "authorized_asn": row[2], "hijacking_asn": row[3]} for row in rows]            
+    return dict_data
+    
 async def store():
     while True:
         try:       
@@ -22,28 +65,6 @@ async def store():
                         origin_asn=path[-1] if path else None
                         if isinstance(origin_asn, list):
                                 continue
-                        # if prefix not in CACHE:
-                        #     await asyncio.to_thread(cur.execute,"SELECT asn FROM bgp_prefix_asn WHERE prefix = ?", (prefix,))
-                        #     row=await asyncio.to_thread(cur.fetchone)
-                        # else:
-                        #     row=CACHE[prefix]
-                        # # print(path)
-                        # if row is None:
-                        #     # print(f"{prefix},{origin_asn}")
-                        #     CACHE[prefix]=(origin_asn,)
-                        #     if(len(TEMP)<100):
-                        #         TEMP.append((prefix,origin_asn))
-                        #     else:                                    
-                        #         await asyncio.to_thread(cur.executemany,"INSERT INTO bgp_prefix_asn VALUES(?,?)",TEMP)
-                        #         await asyncio.to_thread(con.commit)
-                        #         TEMP.clear()
-                        # else:
-                            
-                        #     if origin_asn != RPKI.get(prefix):
-                        #         print(f"anomaly detected,prefix {prefix} announced by ASN {row[0]} now being announced by {origin_asn}")
-                        #         # continue
-                        #     else:
-                        #         continue
                         authorized_asn = RPKI.get(prefix)
                         if authorized_asn is None:
                             continue
@@ -52,7 +73,9 @@ async def store():
                         else:
                             if (prefix,origin_asn) not in ANOMALY:
                                 ANOMALY.add((prefix,origin_asn))
-                                print(f"anomaly detected,prefix {prefix} announced by ASN {authorized_asn} now being announced by {origin_asn}")
+                                await asyncio.to_thread(cur.execute,"INSERT INTO bgp_prefix_asn VALUES(datetime('now'),?,?,?)",(prefix,authorized_asn,origin_asn))
+                                await asyncio.to_thread(con.commit)
+                                # print(f"anomaly detected,prefix {prefix} announced by ASN {authorized_asn} now being announced by {origin_asn}")
                             else:
                                 continue
         except Exception as e:
@@ -65,9 +88,3 @@ async def download_rpki():
                 temp1=json.loads(await resp.text())
                 RPKI={roa['prefix']: roa['asn'] for roa in temp1['roas']}
         await asyncio.sleep(1200)
-
-async def main():
-    await asyncio.gather(store(),download_rpki())
-
-if __name__=="__main__":
-    asyncio.run(main())

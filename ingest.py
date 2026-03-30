@@ -16,7 +16,7 @@ async def stream():
     while True:
         async with websockets.connect(URI,ping_interval=20,ping_timeout=30) as ws:
             await ws.send(json.dumps(SUBSCRIBE))
-            print("connected... \n")
+            # print("connected... \n")
             async for message in ws:
                 try:
                     data=json.loads(message)
