@@ -49,7 +49,7 @@ async def clear():
     c_cur = con.cursor()
     while True:
         try:
-            delete_query = "DELETE FROM bgp_prefix_asn WHERE created_at <= datetime('now', '-1 minutes')"
+            delete_query = "DELETE FROM bgp_prefix_asn WHERE created_at <= datetime('now', '-2 minutes')"
             await asyncio.to_thread(c_cur.execute,delete_query)
             await asyncio.sleep(120)
         except Exception as e:
