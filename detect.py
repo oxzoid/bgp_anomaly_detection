@@ -103,8 +103,7 @@ async def download_rpki():
         async with aiohttp.ClientSession() as session:
             async with session.get('https://rpki.cloudflare.com/rpki.json') as resp:
                 async for roa in ijson.items_async(resp.content, 'roas.item'):
-                    if ':' not in roa['prefix']:
-                        await asyncio.to_thread(r_cur.execute, "INSERT OR REPLACE INTO roas VALUES(?,?)", (roa['prefix'], roa['asn']))
+                    await asyncio.to_thread(r_cur.execute, "INSERT OR REPLACE INTO roas VALUES(?,?)", (roa['prefix'], roa['asn']))
             await asyncio.to_thread(con.commit)
         await asyncio.sleep(1200)
         
